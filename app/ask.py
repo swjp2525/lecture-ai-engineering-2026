@@ -11,6 +11,8 @@
 """
 
 import argparse
+import time
+import os
 
 from google import genai
 from google.genai import errors
@@ -23,18 +25,83 @@ DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何�
 
 def ask(question: str) -> str:
     client = genai.Client(api_key=get_api_key())
-    response = client.models.generate_content(model=MODEL, contents=question)
 
-    # TODO(第1回 演習): response.usage_metadata から
-    #   入力トークン数と出力トークン数を表示してみよう（Copilotに頼んでよい）
+    temperature = float(os.getenv("AIE_TEMPERATURE", "1"))
+    print(f"[requested temperature] {temperature}")
+
+    start = time.perf_counter()
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=question,
+        config={"temperature": temperature},
+    )
+    elapsed = time.perf_counter() - start
+
+    print(f"[time] {elapsed:.3f} seconds")
+
+    if response.usage_metadata is not None:
+        usage = response.usage_metadata
+        print(
+            f"[tokens] input={usage.prompt_token_count}, "
+            f"output={usage.candidates_token_count}"
+        )
 
     return response.text
+
+def chat_loop() -> None:
+    client = genai.Client(api_key=get_api_key())
+    temperature = float(os.getenv("AIE_TEMPERATURE", "1"))
+
+    chat = client.chats.create(
+        model=MODEL,
+        config={"temperature": temperature},
+    )
+
+    print(f"[model] {MODEL}")
+    print(f"[requested temperature] {temperature}")
+    print("会話モード：終了するには /exit を入力")
+
+    while True:
+        try:
+            question = input("\nあなた > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n終了します。")
+            break
+
+        if question == "/exit":
+            break
+        if not question:
+            continue
+
+        try:
+            start = time.perf_counter()
+            response = chat.send_message(question)
+            elapsed = time.perf_counter() - start
+        except errors.APIError as e:
+            print(api_error_message(e.code, e.message))
+            continue
+
+        print(f"[time] {elapsed:.3f} seconds")
+
+        if response.usage_metadata is not None:
+            usage = response.usage_metadata
+            print(
+                f"[tokens] input={usage.prompt_token_count}, "
+                f"output={usage.candidates_token_count}"
+            )
+
+        print(f"AI > {response.text}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="素のLLMに質問する")
     parser.add_argument("question", nargs="?", default=DEFAULT_QUESTION)
+    parser.add_argument("--chat", action="store_true", help="会話モード")
     args = parser.parse_args()
+
+    if args.chat:
+        chat_loop()
+        return
 
     print(f"[model] {MODEL}")
     print(f"[質問] {args.question}\n")
